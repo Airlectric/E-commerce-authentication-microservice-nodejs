@@ -9,14 +9,9 @@ const { connectDB } = require("./utils/db");
 
 const app = express();
 
-// Trust first proxy
-app.set('trust proxy', 1);
 
 // Middleware
-app.use(cors({
-  origin: "http://localhost:4444", // Frontend development URL
-  withCredentials: true,               // Allow cookies to be sent
-}));
+app.use(cors({origin: ["http://localhost:4444", "http://localhost:8000"], credentials: true}));
 
 app.use(bodyParser.json({ limit: "5mb" }));
 
