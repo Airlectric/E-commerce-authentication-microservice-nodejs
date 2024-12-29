@@ -10,9 +10,6 @@ const { connectDB } = require("./utils/db");
 const app = express();
 
 
-// Middleware
-app.use(cors({origin: ["http://localhost:8000"], credentials: true}));
-
 app.use(bodyParser.json({ limit: "5mb" }));
 
 // Database Connection
