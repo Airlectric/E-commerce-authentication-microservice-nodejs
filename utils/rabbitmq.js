@@ -4,7 +4,7 @@ const amqplib = require("amqplib");
 const rabbitMQ = {
   sendMessage: async (queue, message) => {
     try {
-      const connection = await amqplib.connect(process.env.RABBITMQ_URI);
+      const connection = await amqplib.connect(process.env.RABBITMQ_URL);
       const channel = await connection.createChannel();
       await channel.assertQueue(queue, { durable: true });
       channel.sendToQueue(queue, Buffer.from(JSON.stringify(message)));

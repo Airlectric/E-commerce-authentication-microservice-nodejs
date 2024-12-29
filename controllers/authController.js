@@ -8,6 +8,11 @@ const {
   getStoredRefreshToken,
   revokeRefreshToken,
 } = require("../utils/tokenManager");
+const rabbitMQ = require("../utils/rabbitmq");
+const keepAlive = require("../utils/keepAlive");
+
+const notificationsServiceURL = process.env.KEEP_NOTI_ALIVE;
+const axios = require('axios');
 
 // Register new user
 exports.register = async (req, res) => {
@@ -32,7 +37,28 @@ exports.register = async (req, res) => {
     });
 
     await user.save();
-
+	
+	// Send the first RabbitMQ message
+     try {
+      await rabbitMQ.sendMessage("user_data_sync", { id: user._id, username, email, role: user.role });
+    } catch (mqError) {
+      console.error("RabbitMQ Error (user_data_sync):", mqError.message);
+    }
+	
+    // Use setTimeout to send the second message after a delay
+    setTimeout(async () => {
+      try {
+        await rabbitMQ.sendMessage("auth_events", {
+          type: "user_created",
+          data: { userId: user._id, username, email, role: user.role },
+        });
+      } catch (error) {
+        console.error("RabbitMQ Error (auth_events):", error.message);
+      }
+    }, 5000);
+	
+	await keepAlive(notificationsServiceURL);
+	
     res.status(201).json({ message: "User registered successfully" });
   } catch (error) {
     console.error("Register Error:", error.message);
@@ -61,6 +87,56 @@ exports.login = async (req, res) => {
     const refreshToken = generateRefreshToken(payload);
 
     await storeRefreshToken(user._id.toString(), refreshToken);
+	
+	
+    try {
+      await rabbitMQ.sendMessage("auth_events", {
+        type: "user_logged_in",
+        data: { userId: user._id, username },
+      });
+    } catch (error) {
+      console.error("RabbitMQ Error:", error.message);
+    }
+	
+	let profileImageUrl = null;
+
+    // Generate secure download URL if the user has a profileFileId
+    if (user.profileFileId) {
+      const authorizeResponse = await axios.get('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${process.env.B2_APPLICATION_KEY_ID}:${process.env.B2_APPLICATION_KEY}`
+          ).toString('base64')}`,
+        },
+      });
+
+      const {
+        apiInfo: { storageApi },
+        authorizationToken,
+      } = authorizeResponse.data;
+
+      const { downloadUrl } = storageApi;
+
+      if (!downloadUrl || !authorizationToken) {
+        throw new Error("Failed to retrieve valid Backblaze B2 configuration.");
+      }
+
+      const downloadAuthorizationResponse = await axios.post(
+        `${storageApi.apiUrl}/b2api/v3/b2_get_download_authorization`,
+        {
+          bucketId: process.env.B2_BUCKET_ID,
+          fileNamePrefix: user.profileFileId,
+          validDurationInSeconds: 3600, // 1-hour validity
+        },
+        {
+          headers: {
+            Authorization: authorizationToken,
+          },
+        }
+      );
+
+      profileImageUrl = `${downloadUrl}/file/${process.env.B2_BUCKET_NAME}/${user.profileFileId}?Authorization=${downloadAuthorizationResponse.data.authorizationToken}`;
+    }
 
     res.json({
       accessToken,
@@ -70,8 +146,12 @@ exports.login = async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role,
+		profileImage:profileImageUrl,
       },
     });
+	
+	await keepAlive(notificationsServiceURL);
+	
   } catch (error) {
     console.error("Login Error:", error.message);
     res.status(500).json({ error: "Internal server error" });
@@ -118,6 +198,17 @@ exports.logout = async (req, res) => {
     }
 
     await revokeRefreshToken(userId);
+	
+	try {
+      await rabbitMQ.sendMessage("auth_events", {
+        type: "user_logged_out",
+        data: { userId },
+      });
+    } catch (error) {
+      console.error("RabbitMQ Error:", error.message);
+    }
+	
+	await keepAlive(notificationsServiceURL);
 
     res.json({ message: "Logged out successfully" });
   } catch (error) {

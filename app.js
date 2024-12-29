@@ -11,7 +11,7 @@ const app = express();
 
 
 // Middleware
-app.use(cors({origin: ["http://localhost:4444", "http://localhost:8000"], credentials: true}));
+app.use(cors({origin: ["http://localhost:8000"], credentials: true}));
 
 app.use(bodyParser.json({ limit: "5mb" }));
 
